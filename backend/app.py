@@ -28,11 +28,21 @@ def create_table(conn):
         )
     """)
 
+def initialize_cards(conn):
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM cards")
+    count = cursor.fetchone()[0]
+    if count == 0:
+        cursor.execute("INSERT INTO cards (title, column, fields_data) VALUES (?, ?, ?)",
+                       ("Card teste", "todo", json.dumps({"Detalhes": "Descrição teste", "Prioridade": "Baixa"})))
+        conn.commit()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Iniciando a aplicação e configurando o banco de dados")
     conn = sqlite3.connect(DATABASE_URL)
     create_table(conn)
+    initialize_cards(conn)
     conn.close()
 
     yield
