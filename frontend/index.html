@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple Kanban</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+
+  <style>
+    .card[draggable="true"]:active {
+      cursor: grabbing;
+    }
+    .card.dragging {
+      opacity: 0.5;
+      border: 2px dashed #3B82F6;
+    }
+    .cards.drag-over {
+      background-color: #E5E7EB;
+    }
+    .modal-overlay {
+      background-color: rgba(0, 0, 0, 0.5);
+    }
+    .modal-content {
+      max-width: 500px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+
+<body class="bg-gray-100 p-8 min-h-screen flex justify-center items-start font-sans">
+  <div x-data="app()" class="w-full max-w-6xl flex flex-col md:flex-row gap-6">
+    <template x-for="column in columns" :key="column.id">
+      <div
+        class="column bg-gray-200 rounded-lg p-4 flex-1 min-w-[300px] shadow-md"
+        @drop="dropCard($event, column.id)"
+        @dragover.prevent
+        @dragenter.prevent="event.currentTarget.classList.add('drag-over')"
+        @dragleave="event.currentTarget.classList.remove('drag-over')"
+      >
+        <h2 x-text="column.title" class="text-xl font-semibold mb-4 text-gray-800 text-center"></h2>
+
+        <div class="cards min-h-[100px] rounded-md p-1">
+          <template x-for="card in getCardsInColumn(column.id)" :key="card.id">
+            <div class="card bg-white border border-gray-300 rounded-md p-3 mb-2 flex justify-between items-start cursor-grab shadow-sm"
+              draggable="true"
+              @dragstart="dragStart(card)"
+              @dragend="event.currentTarget.classList.remove('dragging')"
+              @click="openEditModal(card)"
+            >
+              <div>
+                <span x-text="card.title" class="font-medium text-gray-800"></span>
+                <div class="text-sm text-gray-600 mt-1">
+                  <template x-for="(value, key) in card.fields_data" :key="key">
+                    <div x-show="value !== null && value !== ''">
+                      <span class="font-semibold" x-text="key + ':'"></span>
+                      <span x-text="value"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              <div class="card-actions flex gap-2 ml-2">
+                <button @click.stop="deleteCard(card.id)" class="text-gray-500 hover:text-red-600 transition text-lg">&times;</button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <button
+          @click="openAddModal(column.id)"
+          class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition duration-200"
+        >
+            + Adicionar card
+        </button>
+      </div>
+    </template>
+    <div
+      x-show="showModal"
+      class="fixed inset-0 z-50 flex items-center justify-center modal-overlay"
+      @click.away="closeModal()"
+    >
+      <div class="bg-white rounded-lg p-6 shadow-xl w-11/12 modal-content" @click.stop>
+        <h3 x-text="modelTitle" class="text-2xl font-semibold mb-6 text-gray-800 text-center"></h3>
+
+        <form @submit.prevent="saveCard()">
+          <div class="mb-4">
+            <label for="cardTitle" class="block text-gray-700 text-sm font-bold mb-2">Título do Card:</label>
+            <input
+              type="text"
+              id="cardTitle"
+              x-model="currentCard.title"
+              required
+              class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            >
+          </div>
+          <div class="mb-6">
+            <label class="block text-gray-700 text-sm font-bold mb-2">Campos customizáveis:</label>
+            <template x-for="(field, index) in customFields" :key="index">
+              <div class="mb-3">
+                <label x-text="field.label + ':'" class="block text-gray-600 text-sm font-medium mb-1"></label>
+                <input
+                  x-if="field.type === 'text'"
+                  type="text"
+                  x-model="currentCard.fields_data[field.key]"
+                  :placeholder="field.placeholder || ''"
+                  class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                >
+              </div>
+            </template>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const BACKEND_URL = 'http://localhost:8000';
+    function app() {
+      return {
+        columns: [
+          { id: 'todo', title: 'A Fazer' },
+          { id: 'doing', title: 'Em andamento' },
+          { id: 'done', title: 'Concluído' },
+        ],
+        cards: [],
+        draggedCard: null,
+        showModal: false,
+        modelTitle: '',
+        currentCard: { id: null, title: '', column: '', fields_data: {} },
+        isAdding: true,
+
+        customFields: [
+          { key: 'Responsável', label: 'Responsável', type: 'text', placeholder: 'Nome do responsável' },
+          { key: 'Prioridade', label: 'Prioridade', type: 'select', options: ['Baixa', 'Média', 'Alta', 'Urgente'], placeholder: 'Defina a prioridade' },
+          { key: 'Prazo', label: 'Prazo', type: 'text', placeholder: 'Ex: 01/01/2000' },
+          { key: 'Detalhes', label: 'Detalhes', type: 'textarea', placeholder: 'Informações adicionais' },
+          { key: 'Status', label: 'Status', type: 'text', placeholder: 'Nome do responsável' },
+        ],
+
+        init() {
+          this.fetchCards();
+        },
+        async fetchCards() {
+          try {
+            const response = await fetch(`${BACKEND_URL}/cards`);
+            if (!response.ok) throw new Error('Falha ao buscar cards');
+            this.cards = await response.json();
+
+            this.cards.forEach(card => {
+              if (typeof card.fields_data !== 'object' || card.fields_data == null) {
+                cards.fields_data = {};
+              } 
+            })
+          } catch (error) {
+            console.error("Erro ao buscar cards:", error);
+            alert("Não foi possível carregar os cards.")
+          }
+        },
+        getCardsInColumn(columnId) {
+          return this.cards.filter(card => card.column === columnId);
+        },
+
+        // Modal logic
+        openAddModal(columnId) {
+          this.isAdding = true;
+          this.modalTitle = 'Adicionar Novo Card';
+          this.currentCard = { id: null, title: '', column: columnId, fields_data: {}};
+          this.customFields.forEach(field => {
+            this.currentCard.fields_data[field.key] = '';
+          });
+          this.showModal = true;
+        },
+        openEditModal(card) {
+          this.isAdding = false;
+          this.modalTitle = 'Editar Card';
+          this.currentCard = JSON.parse(JSON.stringify(card));
+          this.customFields.forEach(field => {
+            if (!(field.key in this.currentCards.fields_data)) {
+              this.currentCard.fields_data[field.key] = '';
+            }
+          });
+          this.showModal = true;
+        },
+        closeModal() {
+          this.showModal = false;
+        },
+        async saveCard() {
+          const cleanedFieldsData = {};
+          for (const key in this.currentCard.fields_data) {
+            const value = this.currentCard.fields_data[key];
+            if (value !== null && value !== '' && value !== undefined) {
+              cleanedFieldsData[key] = value;
+            }
+          }
+          this.currentCards.fields_data = cleanedFieldsData;
+
+          try {
+            let response;
+            if (this.isAdding) {
+              response = await fetch(`${BACKEND_URL}/cards`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.currentCard)
+              });
+            } else {
+              response = await fetch(`${BACKEND_URL}/cards/${this.currentCard.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.currentCard)
+              })
+            }
+
+            if (!response.ok) throw new Error('Falha ao salvar card');
+            this.closeModal();
+            this.fetchCards();
+          } catch (error) {
+            console.error('Error ao salvar card:', error);
+            alert('Falha ao salvar card.');
+          }
+        },
+        async deleteCard(cardId) {
+          if (!confirm('Tem certeza que deseja deletar este card?')) {
+            return;
+          }
+          try {
+            const response = await fetch(`${BACKEND_URL}/cards/${cardId}`, {
+              method: 'DELETE'
+            });
+            if (!response.ok) throw new Error('Falha ao deletar card');
+            this.fetchCards();
+          } catch (error) {
+            console.error("Erro ao deletar card:", error);
+            alerta('Falha ao deletar card.')
+          }
+        },
+
+        // Drag and Drop
+        dragStart(card) {
+          this.draggedCard = card;
+          event.currentTarget.classList.add('dragging');
+        },
+        async dropCard(event, targetColumnId) {
+          event.currentTarget.classList.remove('drag-over');
+          if (this.draggedCard && this.draggedCard.column !== targetColumnId) {
+            const cardToUpdate = JSON.parse(JSON.stringify(this.draggedCard));
+            cardToUpdate.column = targetColumnId;
+            
+            try {
+              const response = await fetch(`${BACKEND_URL}/cards/${cardToUpdate.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(cardToUpdate)
+              });
+              if (!response.ok) throw new Error('Falha ao mover card');
+              this.fetchCards();
+            } catch (error) {
+              console.error("Erro ao mover card:", error);
+              alert('Falha ao mover card')
+              this.fetchCards();
+            }
+          }
+          this.draggedCard = null;
+        }
+      }
+    }
+  </script>
+</body>
+
+</html>
