@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 DATABASE_URL = "database.db"
 
 def get_db():
-    conn = sqlite3.connect(DATABASE_URL)
+    conn = sqlite3.connect(DATABASE_URL, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -98,7 +98,7 @@ async def read_root():
 @app.get('/cards', response_model=List[CardInDB])
 async def get_cards(db: sqlite3.Connection = Depends(get_db)):
     cursor = db.cursor()
-    cursor.execute("SELECT id, title, column FROM cards")
+    cursor.execute("SELECT id, title, column, fields_data FROM cards")
     cards = cursor.fetchall()
 
     parsed_cards = []
@@ -115,7 +115,7 @@ async def get_cards(db: sqlite3.Connection = Depends(get_db)):
 @app.get('/cards/{card_id}', response_model=CardInDB)
 async def get_card(card_id: int, db: sqlite3.Connection = Depends(get_db)):
     cursor = db.cursor()
-    cursor.execute("SELECT id, title, column FROM cards WHERE id = ?", (card_id,))
+    cursor.execute("SELECT id, title, column, fields_data FROM cards WHERE id = ?", (card_id,))
     card = cursor.fetchone()
     if card:
         card_dict = dict(card)
@@ -165,7 +165,7 @@ async def update_card(card_id: int, updated_card: CardUpdate, db: sqlite3.Connec
         update_fields.append("title = ?")
         update_values.append(updated_card.title)
     if updated_card.column is not None:
-        update_fields.append("column_name = ?")
+        update_fields.append("column = ?")
         update_values.append(updated_card.column)
     
     update_fields.append("fields_data = ?")
